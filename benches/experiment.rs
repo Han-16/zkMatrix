@@ -22,6 +22,7 @@ use zkmatrix::setup::SRS;
 
 use zkmatrix::utils::curve::ZpElement;
 use zkmatrix::utils::curve::{G1Element, G2Element, GtElement};
+use zkmatrix::utils::dirac::{self, BraKet};
 use zkmatrix::utils::fiat_shamir::TranSeq;
 use zkmatrix::utils::to_file::FileIO;
 
@@ -53,7 +54,7 @@ fn main() {
     let mut csv = BufWriter::new(file);
     writeln!(
         csv,
-        "LogK,K,ProverTime(s),VerifierTime(s),ProofSize(B),CommitmentSize(B),TotalProofSize(B)"
+        "LogK,K,CommitTime(s),ProverTime(s),TotalProveTime(s),VerifierTime(s),ProofSize(B),CommitmentSize(B),TotalProofSize(B)"
     )
     .unwrap();
 
@@ -267,19 +268,26 @@ fn run_dense_experiment(log_k: u32, csv: &mut impl Write) {
     let srs = SRS::new(k + 2);
     let (c, a, b) = experiment_data::gen_matrices_dense(k);
 
+    let timer_commit = Instant::now();
+
     let a_tilde = ZpElement::rand();
-    let (a_com, a_cache) = a.commit_rm(&srs);
+    let a_cache = a.ket(&srs.h_hat_vec);
+    let a_com = dirac::inner_product(&srs.g_hat_vec, &a_cache);
     let a_blind = a_com + a_tilde * srs.blind_base;
 
     let b_tilde = ZpElement::rand();
-    let (b_com, b_cache) = b.commit_cm(&srs);
+    let b_cache = b.bra(&srs.g_hat_vec);
+    let b_com = dirac::inner_product(&b_cache, &srs.h_hat_vec);
     let b_blind = b_com + b_tilde * srs.blind_base;
 
     let c_tilde = ZpElement::rand();
-    let (c_com, c_cache) = c.commit_cm(&srs);
+    let c_cache = c.bra(&srs.g_hat_vec);
+    let c_com = dirac::inner_product(&c_cache, &srs.h_hat_vec);
     let c_blind = c_com + c_tilde * srs.blind_base;
 
     let commitments = vec![c_blind, a_blind, b_blind];
+    let commit_time = timer_commit.elapsed().as_secs_f64();
+
     let timer_prove = Instant::now();
     let protocol = ZkMatMul::new(
         commitments[0],
@@ -307,6 +315,7 @@ fn run_dense_experiment(log_k: u32, csv: &mut impl Write) {
 
     let transcript = zk_transcript.publish_trans();
     let prover_time = timer_prove.elapsed().as_secs_f64();
+    let total_prove_time = commit_time + prover_time;
     let commitment_size = bincode::serialize(&commitments).unwrap().len();
     let proof_size = bincode::serialize(&transcript.data[3..]).unwrap().len();
     let total_proof_size = commitment_size + proof_size;
@@ -329,12 +338,12 @@ fn run_dense_experiment(log_k: u32, csv: &mut impl Write) {
 
     writeln!(
         csv,
-        "{log_k},{k},{prover_time:.9},{verifier_time:.9},{proof_size},{commitment_size},{total_proof_size}"
+        "{log_k},{k},{commit_time:.9},{prover_time:.9},{total_prove_time:.9},{verifier_time:.9},{proof_size},{commitment_size},{total_proof_size}"
     )
     .unwrap();
 
     println!(
-        "Prover: {prover_time:.6}s | Verifier: {verifier_time:.6}s | Proof: {proof_size} B | Commitment: {commitment_size} B | Total: {total_proof_size} B"
+        "Commit: {commit_time:.6}s | Prover: {prover_time:.6}s | Total prove: {total_prove_time:.6}s | Verifier: {verifier_time:.6}s | Proof: {proof_size} B | Commitment: {commitment_size} B | Total proof: {total_proof_size} B"
     );
 }
 
