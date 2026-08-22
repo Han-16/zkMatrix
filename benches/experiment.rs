@@ -10,11 +10,11 @@
 //! Note using the release mode is important for the performance.
 //! 
 #![allow(dead_code)]
+use std::env;
+use std::fs::{create_dir_all, File, OpenOptions};
+use std::io::{BufWriter, Write};
+use std::process;
 use std::time::Instant;
-
-use std::fs::OpenOptions;
-use std::fs::File;
-use std::io::Write;
 
 use zkmatrix::commit_mat::CommitMat;
 use zkmatrix::mat::Mat;
@@ -34,19 +34,88 @@ use zkmatrix::config::{Q, LOG_DIM, SQRT_MATRIX_DIM};
 
 use zkmatrix::zkprotocols::zk_trans::ZkTranSeqProver;
 
-fn main(){
-    let mut log_file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .append(true)
-        .open(format!("log/log_2e{:?}", LOG_DIM)).unwrap();
+const VERIFY_REPEATS: usize = 10;
 
-    // experiment_srs_gen(&mut log_file);
-    // experiment_gen_matrices(&mut log_file);
-    // experiment_commit_matrices(&mut log_file);
-    // experiment_matmul(&mut log_file);
-    // experiment(&mut log_file);
-    experiment_dense(&mut log_file);
+fn main() {
+    let (from, to) = parse_range().unwrap_or_else(|error| {
+        eprintln!("error: {error}");
+        eprintln!(
+            "usage: cargo bench --bench experiment -- --from <log2 size> --to <log2 size>"
+        );
+        process::exit(2);
+    });
+
+    create_dir_all("benchmark/zkmatrix").unwrap();
+    create_dir_all("data/public").unwrap();
+    create_dir_all("data/private").unwrap();
+
+    let file = File::create("benchmark/zkmatrix/zkmatrix_benchmark_results.csv").unwrap();
+    let mut csv = BufWriter::new(file);
+    writeln!(
+        csv,
+        "LogK,K,ProverTime(s),VerifierTime(s),ProofSize(B),CommitmentSize(B),TotalProofSize(B)"
+    )
+    .unwrap();
+
+    println!(
+        "Running zkMatrix benchmarks from 2^{from} x 2^{from} through 2^{to} x 2^{to}"
+    );
+
+    for log_k in from..=to {
+        run_dense_experiment(log_k, &mut csv);
+        csv.flush().unwrap();
+    }
+}
+
+fn parse_range() -> Result<(u32, u32), String> {
+    let mut args = env::args().skip(1);
+    let mut from = None;
+    let mut to = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--from" => {
+                let value = args.next().ok_or("missing value after --from")?;
+                from = Some(
+                    value
+                        .parse::<u32>()
+                        .map_err(|_| format!("invalid --from value: {value}"))?,
+                );
+            }
+            "--to" => {
+                let value = args.next().ok_or("missing value after --to")?;
+                to = Some(
+                    value
+                        .parse::<u32>()
+                        .map_err(|_| format!("invalid --to value: {value}"))?,
+                );
+            }
+            "--help" | "-h" => {
+                println!(
+                    "usage: cargo bench --bench experiment -- --from <log2 size> --to <log2 size>"
+                );
+                process::exit(0);
+            }
+            _ => return Err(format!("unknown argument: {arg}")),
+        }
+    }
+
+    let from = from.ok_or("--from is required")?;
+    let to = to.ok_or("--to is required")?;
+
+    if from > to {
+        return Err(format!(
+            "--from ({from}) must not exceed --to ({to})"
+        ));
+    }
+    if to >= usize::BITS {
+        return Err(format!(
+            "--to must be smaller than {} on this platform",
+            usize::BITS
+        ));
+    }
+
+    Ok((from, to))
 }
 
 
@@ -189,135 +258,83 @@ fn experiment(log_file: &mut File) {
 
 }
 
-fn experiment_dense(log_file: &mut File) {
+fn run_dense_experiment(log_k: u32, csv: &mut impl Write) {
+    let k = 1usize << log_k;
 
-    println!(" ** Experiment for zkMatrix, Matrix Dim 2e{:?} times 2e{:?}; Number of non-zero elements: 2e{:?} ** ",
-    LOG_DIM/2,
-    LOG_DIM/2,
-    LOG_DIM,
-    );
+    println!("\n=== zkMatrix: 2^{log_k} x 2^{log_k} ({k} x {k}) ===");
 
-    let srs_timer = Instant::now();
-
-    let srs = SRS::new(2usize.pow(LOG_DIM as u32/2) + 2);
-
-    let srs_duration = srs_timer.elapsed();
-
-    println!(" ** SRS generation time: {:?}", srs_duration);
-    writeln!(log_file, " ** SRS generation time: {:?}", srs_duration).unwrap();
-
-    let mat_timer = Instant::now();
-
-    let (c, a, b) = 
-        experiment_data::gen_matrices_dense(SQRT_MATRIX_DIM);
-    
-    // c.to_file(c.id.to_string(), false).unwrap();
-    // a.to_file(a.id.to_string(), false).unwrap();
-    // b.to_file(b.id.to_string(), false).unwrap();
-
-    let mat_duration = mat_timer.elapsed();
-
-    println!(" ** Matrix generation time: {:?}", mat_duration);
-    writeln!(log_file, " ** Matrix generation time: {:?}", mat_duration).unwrap();
-
-    // let commit_a_timer = Instant::now();
+    let srs = SRS::new(k + 2);
+    let (c, a, b) = experiment_data::gen_matrices_dense(k);
 
     let a_tilde = ZpElement::rand();
-    let (a_com, a_cache) = 
-        a.commit_rm(&srs);
+    let (a_com, a_cache) = a.commit_rm(&srs);
     let a_blind = a_com + a_tilde * srs.blind_base;
-
-    // let commit_a_duration = commit_a_timer.elapsed();
-
-    // println!(" ** Commit matrix a time: {:?}", commit_a_duration);
-    // writeln!(log_file, " ** Commit matrix a time: {:?}", commit_a_duration).unwrap();
-    
-    // let commit_b_timer = Instant::now();
 
     let b_tilde = ZpElement::rand();
     let (b_com, b_cache) = b.commit_cm(&srs);
     let b_blind = b_com + b_tilde * srs.blind_base;
 
-    // let commit_b_duration = commit_b_timer.elapsed();
-
-    // println!(" ** Commit matrix b time: {:?}", commit_b_duration);
-    // writeln!(log_file, " ** Commit matrix b time: {:?}", commit_b_duration).unwrap();
-
-    // let commit_c_timer = Instant::now();
-
     let c_tilde = ZpElement::rand();
     let (c_com, c_cache) = c.commit_cm(&srs);
     let c_blind = c_com + c_tilde * srs.blind_base;
 
-    // let commit_c_duration = commit_c_timer.elapsed();
-
-    // println!(" ** Commit matrix c time: {:?}", commit_c_duration);
-    // writeln!(log_file, " ** Commit matrix c time: {:?}", commit_c_duration).unwrap();
-
-    let commit_cab: Vec<GtElement> = [c_blind, a_blind, b_blind].to_vec();
-
+    let commitments = vec![c_blind, a_blind, b_blind];
     let timer_prove = Instant::now();
-    
-    let matmul_protocol = ZkMatMul::new(
-        commit_cab[0],
-        commit_cab[1],
-        commit_cab[2], 
-        SQRT_MATRIX_DIM,
-        SQRT_MATRIX_DIM,
-        SQRT_MATRIX_DIM,
+    let protocol = ZkMatMul::new(
+        commitments[0],
+        commitments[1],
+        commitments[2],
+        k,
+        k,
+        k,
     );
-    
-    let mut zk_trans = ZkTranSeqProver::new(&srs);
+    let mut zk_transcript = ZkTranSeqProver::new(&srs);
 
-    matmul_protocol.prove::<i128, i64, i64>(
+    protocol.prove::<i128, i64, i64>(
         &srs,
-        &mut zk_trans,
-        c, a, b,
-        &c_cache, &a_cache, &b_cache, 
-        c_tilde, a_tilde, b_tilde,
+        &mut zk_transcript,
+        c,
+        a,
+        b,
+        &c_cache,
+        &a_cache,
+        &b_cache,
+        c_tilde,
+        a_tilde,
+        b_tilde,
     );
 
-    let trans = zk_trans.publish_trans();
+    let transcript = zk_transcript.publish_trans();
+    let prover_time = timer_prove.elapsed().as_secs_f64();
+    let commitment_size = bincode::serialize(&commitments).unwrap().len();
+    let proof_size = bincode::serialize(&transcript.data[3..]).unwrap().len();
+    let total_proof_size = commitment_size + proof_size;
 
-    println!(" ** Prover time of zkMatMul: {:?}", timer_prove.elapsed());
-    writeln!(log_file, " ** Prover time of zkMatMul: {:?}", 
-        timer_prove.elapsed()
-    ).unwrap();
-
-    trans.save_to_file(
-        format!("tr_2e{:?}", LOG_DIM/2)
-    ).unwrap();
-
-    let mut trans_read = TranSeq::read_from_file(
-        format!("tr_2e{:?}", LOG_DIM/2)
+    let mut correctness_transcript = transcript.clone();
+    assert!(
+        protocol.verify(&srs, &mut correctness_transcript),
+        "verification failed for 2^{log_k} x 2^{log_k}"
     );
 
-    let timer_verify = Instant::now();
-
-    let mut verify_time: f64 = 0.;
-    let repeat = 10;
-        
-    for _ in 0..repeat {
-        let mut trans_read = TranSeq::read_from_file(
-            format!("tr_2e{:?}", LOG_DIM/2)
-        );
-
+    let mut total_verify_time = 0.0;
+    for _ in 0..VERIFY_REPEATS {
+        let mut verify_transcript = transcript.clone();
         let timer_verify = Instant::now();
-        matmul_protocol.verify(&srs, &mut trans_read);
-        verify_time += timer_verify.elapsed().as_secs_f64()/repeat as f64;
+        let valid = protocol.verify(&srs, &mut verify_transcript);
+        total_verify_time += timer_verify.elapsed().as_secs_f64();
+        assert!(valid, "verification failed for 2^{log_k} x 2^{log_k}");
     }
+    let verifier_time = total_verify_time / VERIFY_REPEATS as f64;
 
-    verify_time = verify_time * 1000.;
-
-    let result = matmul_protocol.verify(&srs, &mut trans_read);
-
-    println!(" * Verification of zkMatMul result: {:?}", result);
-
-    println!(" ** Verifier time of zkMatMul : {:?}", verify_time);
-    writeln!(log_file, " ** Verifier time of zkMatMul : {:?}", 
-        timer_verify.elapsed())
+    writeln!(
+        csv,
+        "{log_k},{k},{prover_time:.9},{verifier_time:.9},{proof_size},{commitment_size},{total_proof_size}"
+    )
     .unwrap();
 
+    println!(
+        "Prover: {prover_time:.6}s | Verifier: {verifier_time:.6}s | Proof: {proof_size} B | Commitment: {commitment_size} B | Total: {total_proof_size} B"
+    );
 }
 
 fn experiment_srs_gen(log_file: &mut File){
@@ -494,5 +511,4 @@ fn experiment_matmul(log_file: &mut File) {
     writeln!(log_file, " ** Verifier time of MatMul : {:?}", timer_verify.elapsed()).unwrap();
 
 }
-
 
