@@ -338,12 +338,12 @@ fn run_dense_experiment(log_k: u32, csv: &mut impl Write) {
 
     writeln!(
         csv,
-        "{log_k},{k},{commit_time:.9},{prover_time:.9},{total_prove_time:.9},{verifier_time:.9},{proof_size},{commitment_size},{total_proof_size}"
+        "{log_k},{k},{commit_time:.2},{prover_time:.2},{total_prove_time:.2},{verifier_time:.2},{proof_size},{commitment_size},{total_proof_size}"
     )
     .unwrap();
 
     println!(
-        "Commit: {commit_time:.6}s | Prover: {prover_time:.6}s | Total prove: {total_prove_time:.6}s | Verifier: {verifier_time:.6}s | Proof: {proof_size} B | Commitment: {commitment_size} B | Total proof: {total_proof_size} B"
+        "Commit: {commit_time:.2}s | Prover: {prover_time:.2}s | Total prove: {total_prove_time:.2}s | Verifier: {verifier_time:.2}s | Proof: {proof_size} B | Commitment: {commitment_size} B | Total proof: {total_proof_size} B"
     );
 }
 
