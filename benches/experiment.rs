@@ -74,6 +74,7 @@ fn parse_range() -> Result<(u32, u32), String> {
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--bench" => continue,
             "--from" => {
                 let value = args.next().ok_or("missing value after --from")?;
                 from = Some(
@@ -511,4 +512,3 @@ fn experiment_matmul(log_file: &mut File) {
     writeln!(log_file, " ** Verifier time of MatMul : {:?}", timer_verify.elapsed()).unwrap();
 
 }
-
