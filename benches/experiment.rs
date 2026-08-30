@@ -211,7 +211,7 @@ fn experiment(log_file: &mut File) {
         matmul_protocol.prove::<i128, i64, i64>(
             &srs,
             &mut zk_trans,
-            c, a, b,
+            &c, &a, &b,
             &c_cache, &a_cache, &b_cache, 
             c_tilde, a_tilde, b_tilde,
         );
@@ -302,9 +302,9 @@ fn run_dense_experiment(log_k: u32, csv: &mut impl Write) {
     protocol.prove::<i128, i64, i64>(
         &srs,
         &mut zk_transcript,
-        c,
-        a,
-        b,
+        &c,
+        &a,
+        &b,
         &c_cache,
         &a_cache,
         &b_cache,
