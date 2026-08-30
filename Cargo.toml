@@ -43,6 +43,11 @@ name = "experiment"
 harness = false
 path = "benches/experiment.rs"
 
+[[bench]]
+name = "gpt2"
+harness = false
+path = "benches/gpt2.rs"
+
 
 [package.metadata.docs.rs]
 rustdoc-args = [ "--html-in-header", "assets/mathjax_support.html" ]

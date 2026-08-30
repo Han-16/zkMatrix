@@ -1,0 +1,359 @@
+zkMatrix 재현 실험 환경 설정 가이드
+====================================
+
+목적
+----
+새로운 Linux/GCP VM에서 zkMatrix GitHub 저장소를 받은 뒤,
+Rust nightly-2023-06-05 환경에서 dependency 오류를 한 번에 정리하고
+benchmark를 실행하기 위한 명령어 모음입니다.
+
+중요
+----
+- zkMatrix의 rust-toolchain은 nightly-2023-06-05를 사용합니다.
+- 최신 stable Rust로 바꾸지 않는 것을 권장합니다.
+- 원본 저장소에는 Cargo.lock이 포함되지 않을 수 있으므로,
+  2026년의 최신 dependency가 자동 선택되면 오래된 Rust와 충돌합니다.
+- 아래 명령은 우리가 실제로 발생한 오류들을 해결하며 맞춘 버전입니다.
+- 한 번 정상적으로 생성된 Cargo.lock은 반드시 보관하세요.
+
+
+============================================================
+1. 기본 패키지 설치
+============================================================
+
+sudo apt update
+sudo apt install -y curl git build-essential
+
+
+============================================================
+2. Rust / rustup 설치
+============================================================
+
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+
+# zkMatrix가 요구하는 toolchain 설치
+rustup toolchain install nightly-2023-06-05
+
+
+============================================================
+3. zkMatrix clone
+============================================================
+
+# 아래 <ZKMATRIX_GITHUB_URL> 부분을 실제 GitHub 링크로 교체
+git clone <ZKMATRIX_GITHUB_URL> zkMatrix
+cd zkMatrix
+
+# 프로젝트가 요구하는 toolchain 확인
+cat rust-toolchain
+rustup show active-toolchain
+
+# 다음과 같이 나오면 정상:
+# nightly-2023-06-05-x86_64-unknown-linux-gnu
+
+
+============================================================
+4. Cargo.lock 생성
+============================================================
+
+# fresh clone이라면 Cargo.lock이 없을 수 있음
+rm -f Cargo.lock
+
+cargo generate-lockfile
+
+
+============================================================
+5. 2023 Rust toolchain과 호환되도록 dependency 버전 고정
+============================================================
+
+# clap 계열
+cargo update -p clap --precise 4.3.0
+
+# zeroize 계열
+# zeroize_derive보다 반드시 zeroize를 먼저 낮출 것
+cargo update -p zeroize --precise 1.6.0
+cargo update -p zeroize_derive --precise 1.4.2
+
+# base64ct
+cargo update -p base64ct --precise 1.6.0
+
+# rayon 계열
+# rayon-core보다 반드시 rayon을 먼저 낮출 것
+cargo update -p rayon --precise 1.7.0
+cargo update -p rayon-core --precise 1.11.0
+
+# matrixmultiply
+cargo update -p matrixmultiply --precise 0.3.7
+
+# half
+cargo update -p half --precise 2.2.1
+
+# num-bigint
+cargo update -p num-bigint@0.4.8 --precise 0.4.3
+
+
+============================================================
+6. 주요 dependency 버전 확인
+============================================================
+
+grep -A4 'name = "clap"' Cargo.lock
+grep -A4 'name = "clap_builder"' Cargo.lock
+grep -A4 'name = "clap_lex"' Cargo.lock
+
+grep -A4 'name = "zeroize"' Cargo.lock
+grep -A4 'name = "zeroize_derive"' Cargo.lock
+
+grep -A4 'name = "base64ct"' Cargo.lock
+
+grep -A4 'name = "rayon"' Cargo.lock
+grep -A4 'name = "rayon-core"' Cargo.lock
+
+grep -A4 'name = "matrixmultiply"' Cargo.lock
+grep -A4 'name = "half"' Cargo.lock
+grep -A4 'name = "num-bigint"' Cargo.lock
+
+
+예상되는 주요 버전
+-------------------
+clap            = 4.3.0
+clap_builder    = 4.3.0
+clap_lex        = 0.5.1
+
+zeroize         = 1.6.0
+zeroize_derive  = 1.4.2
+
+base64ct        = 1.6.0
+
+rayon           = 1.7.0
+rayon-core      = 1.11.0
+
+matrixmultiply  = 0.3.7
+half            = 2.2.1
+num-bigint      = 0.4.3
+
+
+============================================================
+7. 실험에 필요한 디렉터리 생성
+============================================================
+
+# zkMatrix는 cache/SRS 파일을 data 디렉터리에 저장하지만
+# 부모 디렉터리를 자동 생성하지 않을 수 있음.
+mkdir -p data/public data/private
+
+
+============================================================
+8. Rust / Cargo 버전 최종 확인
+============================================================
+
+rustc --version
+cargo --version
+rustup show active-toolchain
+
+# 대략 다음 계열이면 정상:
+# rustc 1.72.0-nightly
+# cargo 1.72.0-nightly
+# nightly-2023-06-05-x86_64-unknown-linux-gnu
+
+
+============================================================
+9. Benchmark 실행
+============================================================
+
+# 모든 benchmark 실행
+cargo bench --locked
+
+# zkMatrix의 experiment benchmark만 실행하려면
+cargo bench --bench experiment --locked
+
+
+============================================================
+10. 성공한 Cargo.lock 백업
+============================================================
+
+# 매우 중요:
+# 정상적으로 빌드되는 dependency graph가 만들어졌다면 보관할 것.
+cp Cargo.lock Cargo.lock.zkMatrix-repro-2023
+
+# Rust 환경 정보도 같이 보관하면 좋음.
+{
+  rustc --version
+  cargo --version
+  rustup show active-toolchain
+} > reproduction-env.txt
+
+
+============================================================
+11. 개인 Git branch에 재현 환경 저장하기 (권장)
+============================================================
+
+# 원본 저장소가 Cargo.lock을 .gitignore 하고 있어도 -f로 추가 가능
+git checkout -b reproducible-benchmark
+
+git add -f Cargo.lock
+git add reproduction-env.txt
+
+# 빈 data 디렉터리도 clone 후 유지하려면 .gitkeep 추가
+touch data/public/.gitkeep
+touch data/private/.gitkeep
+git add -f data/public/.gitkeep data/private/.gitkeep
+
+git commit -m "Pin dependencies for zkMatrix reproducibility"
+
+# 자신의 fork를 사용하는 경우
+# git push -u origin reproducible-benchmark
+
+
+============================================================
+12. 다음 번에는 더 간단하게 실행
+============================================================
+
+Cargo.lock을 개인 fork/branch에 저장해뒀다면 다음에는 dependency downgrade를
+전부 다시 할 필요가 없습니다.
+
+git clone <YOUR_FORK_URL> zkMatrix
+cd zkMatrix
+git checkout reproducible-benchmark
+
+source "$HOME/.cargo/env"
+rustup toolchain install nightly-2023-06-05
+
+mkdir -p data/public data/private
+
+cargo bench --bench experiment --locked
+
+
+============================================================
+한 번에 실행하기 위한 핵심 명령 모음
+============================================================
+
+# <ZKMATRIX_GITHUB_URL>만 실제 링크로 바꾼 뒤 순서대로 실행
+
+sudo apt update
+sudo apt install -y curl git build-essential
+
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+
+rustup toolchain install nightly-2023-06-05
+
+git clone <ZKMATRIX_GITHUB_URL> zkMatrix
+cd zkMatrix
+
+rm -f Cargo.lock
+cargo generate-lockfile
+
+cargo update -p clap --precise 4.3.0
+
+cargo update -p zeroize --precise 1.6.0
+cargo update -p zeroize_derive --precise 1.4.2
+
+cargo update -p base64ct --precise 1.6.0
+
+cargo update -p rayon --precise 1.7.0
+cargo update -p rayon-core --precise 1.11.0
+
+cargo update -p matrixmultiply --precise 0.3.7
+cargo update -p half --precise 2.2.1
+cargo update -p num-bigint --precise 0.4.3
+
+mkdir -p data/public data/private
+
+rustc --version
+cargo --version
+rustup show active-toolchain
+
+cargo bench --bench experiment --locked
+
+
+============================================================
+우리가 해결했던 오류와 원인 요약
+============================================================
+
+1) clap_lex 1.1.0
+   오류:
+   "this version of Cargo is older than the 2024 edition"
+
+   해결:
+   clap 4.3.0으로 downgrade
+   -> clap_builder 4.3.0
+   -> clap_lex 0.5.1
+
+
+2) zeroize_derive 1.5.0
+   오류:
+   Rust 2024 edition
+
+   원인:
+   zeroize 1.9.0이 zeroize_derive ^1.5를 요구
+
+   해결 순서:
+   zeroize       -> 1.6.0
+   zeroize_derive -> 1.4.2
+
+
+3) base64ct 1.8.3
+   오류:
+   Rust 2024 edition
+
+   해결:
+   base64ct -> 1.6.0
+
+
+4) rayon-core 1.13.0
+   오류:
+   requires rustc 1.80 or newer
+
+   원인:
+   최신 rayon 1.12.0이 rayon-core ^1.13.0을 요구
+
+   해결 순서:
+   rayon      -> 1.7.0
+   rayon-core -> 1.11.0
+
+
+5) matrixmultiply 0.3.11
+   오류:
+   requires rustc 1.75 or newer
+
+   해결:
+   matrixmultiply -> 0.3.7
+
+
+6) half 2.7.1
+   오류:
+   requires rustc 1.81 or newer
+
+   해결:
+   half -> 2.2.1
+
+
+7) num-bigint 0.4.8
+   오류:
+   rustc internal compiler error (ICE)
+
+   해결:
+   num-bigint -> 0.4.3
+
+
+8) Benchmark 실행 중
+   오류:
+   No such file or directory
+   src/commit_mat.rs
+
+   원인:
+   data/private 디렉터리가 존재하지 않음
+
+   해결:
+   mkdir -p data/public data/private
+
+
+============================================================
+주의
+============================================================
+
+- rust-toolchain을 stable이나 최신 nightly로 임의 변경하지 않는 것을 권장.
+- Cargo.lock을 만든 뒤에는 benchmark 실행 시 --locked 사용.
+- 성공한 Cargo.lock은 반드시 별도로 저장.
+- 새 VM에서 같은 실험을 할 때는 가능하면 성공한 Cargo.lock을 그대로 사용.
+- 위 dependency 버전들은 zkMatrix의 nightly-2023-06-05 환경에서
+  실제로 발생한 호환성 문제를 해결하기 위해 맞춘 값임.
